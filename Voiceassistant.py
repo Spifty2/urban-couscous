@@ -5,9 +5,16 @@ import soundfile as sf
 import numpy as np
 from qwen_tts import Qwen3TTSModel
 import sounddevice as sd
+import sys
+import time
+import traceback
+import ollama
+from ollama import 
 
 Question = input("Ask a question:  ")
 Voice_instruction = ("Said in an angry Scottish accent")
+
+sr = 16000 
 
 TTSmodel = Qwen3TTSModel.from_pretrained(
     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
@@ -20,37 +27,55 @@ url = "http://localhost:11434/api/chat"
 payload = {
     "model": "gemma4", 
     "messages": [
-        {'role': 'system', 'content': 'You are a helpful assistant who speaks like a scottish person.'},
+        {'role': 'system', 'content': 'You are a helpful assistant who speaks like a scottish person. Give answers under 3 lines.'},
         {"role": "user", "content": Question}
         
         ]
 }
-response = requests.post(url, json=payload, stream=True)
+response_short = requests.post(url, json=payload, stream=True)
 
-if response.status_code == 200:
+full_reply = ""
+
+if response_short.status_code == 200:                     
     print("Streaming response from Ollama:")
-    for line in response.iter_lines(decode_unicode=True):
+    for line in response_short.iter_lines(decode_unicode=True):
         if line:  
             try:
                 json_data = json.loads(line)
                 
                 if "message" in json_data and "content" in json_data["message"]:
-                    print(json_data["message"]["content"], end="")
+                    chunk = json_data["message"]["content"]
+                    print (chunk, end="")
+                    full_reply += chunk
+
+                if json_data.get("done"):
+                    print("\nStreaming complete.")
+                    break
+    
             except json.JSONDecodeError:
                 print(f"\nFailed to parse line: {line}")
-    print()  
-else:
-    print(f"Error: {response.status_code}")
-    print(response.text)
+    print()
+    print("starting TTS generation...")
+
+    start = time.time()
+
     wavs, sr = TTSmodel.generate_custom_voice(
-        text=response.text,
+        text=full_reply,
         language="English", 
         speaker="Ryan",
         instruct=Voice_instruction, 
 
     )
-    fs = sf.read("output_custom_voice.wav", dtype='float32')
-    sf.write("output_custom_voice.wav", wavs[0], sr)
-    sd.play(wavs[0], sr)
-    sd.wait()
 
+    audio_output = wavs[0].astype('float32')
+    sd.play(audio_output, sr)
+    sd.wait()
+    print("Audio playback finished.")
+    print(f"generation took {time.time() - start:.1f}s")
+           
+else:       
+    print("Error: Failed to get a response from Ollama.")                                           
+    print(f"Error: {response_short.status_code}")
+    print(response_short.text)
+    
+    
